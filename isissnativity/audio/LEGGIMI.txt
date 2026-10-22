@@ -1,0 +1,2 @@
+Metti qui il file della canzone e chiamalo canzone.mp3
+(oppure cambia il nome in CFG.song dentro index.html)
