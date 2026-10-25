@@ -1,3 +1,0 @@
-Per usare la TUA canzone: metti qui un file chiamato canzone.mp3 (va bene anche .m4a, .ogg o .wav).
-Se qui non c e nessun file, il sito suona un carillon natalizio generato dal browser.
-Il nome va scritto tutto in minuscolo: canzone.mp3 (non Canzone.mp3).
