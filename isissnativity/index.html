@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Natività ISISS</title>
+<style>
+:root{--navy:#0d1630;--ink:#f4f6fb;--muted:#b4bfd6;--orange:#ff7a1a;--pink:#e6338f;--teal:#12b5c9;--green:#2fcf7a}
+html,body{margin:0;height:100%;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--navy);color:var(--ink)}
+body{display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom))}
+.panel{width:min(720px,100%);display:grid;grid-template-columns:minmax(120px,220px) 1fr;gap:28px;align-items:center;padding:28px;border-radius:28px;background:#131d3d;box-shadow:0 24px 70px rgba(0,0,0,.45)}
+.panel img{width:100%;height:auto;display:block}
+h1{margin:0 0 10px;font-size:clamp(26px,5vw,40px);line-height:1.1}
+p{margin:0 0 18px;color:var(--muted);line-height:1.55;max-width:46ch}
+button{border:0;border-radius:16px;padding:15px 22px;font-size:17px;font-weight:800;cursor:pointer;color:#0d1630;background:linear-gradient(100deg,var(--orange),var(--pink) 45%,var(--teal) 80%,var(--green))}
+button:focus-visible{outline:3px solid #fff;outline-offset:3px}
+button:disabled{opacity:.5;cursor:not-allowed;filter:grayscale(.6)}
+#status{margin-top:14px;font-size:14px;color:var(--muted);min-height:22px}
+#audioInfo{margin-top:6px;font-size:13px;color:var(--muted);min-height:18px}
+canvas{position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none}
+.hidden{display:none}
+button.alt{margin-left:10px;background:#1c2a58;color:var(--ink);border:1px solid #3a4c88}
+body.pc canvas{z-index:0;pointer-events:auto;cursor:grab;touch-action:none}
+body.pc canvas.drag{cursor:grabbing}
+#hud{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);padding:10px 18px;border-radius:14px;background:rgba(13,22,48,.78);color:var(--muted);font-size:13px;z-index:5;pointer-events:none;white-space:nowrap}
+#hud b{color:var(--ink)}
+#dot{position:fixed;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:rgba(255,246,222,.85);z-index:5;pointer-events:none}
+@media (max-width:560px){.panel{grid-template-columns:1fr;text-align:center}.panel img{max-width:180px;margin:0 auto}p{margin-inline:auto}}
+</style>
+</head>
+<body>
+<div id="dot" class="hidden"></div><div id="hud" class="hidden"><b>Trascina</b> col mouse per guardare · <b>W A S D</b> o frecce per camminare · <b>Maiusc</b> più veloce · <b>R</b> ricomincia · <b>M</b> musica</div>
+<main class="panel" id="ui">
+  <img src="./logo.png" alt="Logo ISISS Matese">
+  <div>
+    <h1>La Natività dell’ISISS Matese</h1>
+    <p>La natività della nostra scuola, con i poster accanto ai personaggi e la guida dell’ISISS Matese al tuo fianco. Sul computer cammini con la tastiera e guardi trascinando il mouse.</p>
+    <button id="start" disabled>Carico la natività…</button><button id="startPc" class="alt hidden">Anteprima da computer</button>
+    <div id="status" role="status">Sto caricando il modello…</div>
+    <div id="audioInfo"></div>
+  </div>
+</main>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { XREstimatedLight } from "three/addons/webxr/XREstimatedLight.js";
+
+const startBtn = document.querySelector("#start"), pcBtn = document.querySelector("#startPc");
+const statusEl = document.querySelector("#status");
+const ui = document.querySelector("#ui");
+const setStatus = t => statusEl.textContent = t;
+
+/* ---------- Parametri regolabili ---------- */
+const CFG = {
+  model: "models/nativita.glb", // la natività intera, tutta in un solo file
+  modelScale: 0.9,    // 1 = misura originale del file (Maria alta ~1 m, i Magi ~1,8 m)
+  cowModel: "models/cow_idle.glb",  // la mucca animata, al posto di quella vecchia nella natività ("" = tieni la vecchia)
+  cowScale: 0.61,     // quanto è grande la mucca (unità del modello): 0,61 la fa alta come la vecchia
+  cowX: -1.155, cowY: -0.03, cowZ: -1.56,   // dove sta (unità del modello, rispetto alla mangiatoia): è il posto della vecchia mucca
+  cowTurn: 0,         // rotazione della mucca (radianti): 0 = guarda verso la mangiatoia e verso di te
+  cowSpeed: 1,        // velocità dell’animazione (1 = normale)
+  mangerX: 0.04,      // punto del modello che finisce al centro (la mangiatoia), in unità del modello
+  mangerZ: 0.56,
+  magiFront: 6.0,     // il punto del gruppo dei Magi più vicino a te (unità del modello)
+  carpetLead: 1.0,    // quanto il tappeto rosso precede i Magi: all’inizio ti trovi sul suo primo punto (m)
+  carpetW: 1.1,       // larghezza del tappeto rosso (m): 1,1 arriva a toccare i due Magi
+  carpetY: 0.012,     // altezza del tappeto dal pavimento (m)
+  turn: 0.45,         // quanto le card si girano verso di te (radianti, 0 = guardano di lato, verso il tappeto)
+  posterW: 0.8, posterH: 1.5,  // misura dei poster (m)
+  posterY: 1.25,      // altezza del centro del poster dal pavimento
+  showStar: true,     // stella luminosa sopra la mangiatoia (nel file non c'è)
+  starY: 1.6,         // altezza della stella cometa sopra la mangiatoia (m)
+  starLight: false,   // luce vera sulla Sacra Famiglia: bella ma pesante, lasciala spenta se rallenta
+  xrScale: 0.9,       // risoluzione nel visore (1 = massima, 0.8 = più veloce)
+  starBeam: true,     // fascio di luce morbido che scende dalla stella sulla Sacra Famiglia
+  song: "audio/canzone", // la canzone: nome SENZA estensione (va bene .mp3 .m4a .ogg .wav). "" = niente musica
+  carillon: true,     // se in audio/ non c’è nessun file, suona un carillon natalizio generato dal browser
+  songVolume: 0.5,    // da 0 a 1
+  snow: true,         // neve che cade intorno a te
+  snowCount: 600, snowRadius: 4, snowHeight: 3.4,   // quanti fiocchi, raggio (m) intorno a te, altezza (m)
+  exposure: 1.0,      // luminosità generale (tone mapping ACES): alza o abbassa se la scena è troppo chiara/scura
+  guide: "guida.png", // il logo che fa da guida
+  guideSize: 0.30,    // grandezza della guida (m)
+  guideSide: 0.5,     // quanto sta a destra di te (m)
+  guideAhead: 0.55,   // quanto sta davanti a te (m)
+  near: 2.6,          // entro questa distanza (m) un poster guardato conta come "letto"
+  spawnDelay: 1.5,    // secondi prima che la scena compaia
+  gazeDeg: 16         // sguardo dentro questo angolo = poster evidenziato
+};
+
+/* ---------- Le stazioni della storia (modifica qui i testi) ----------
+   side: 1 = la card guarda verso sinistra (sta a destra), -1 = guarda verso destra (sta a sinistra)
+   x, z: dove sta la card, in unità del modello rispetto alla mangiatoia (x: + destra · z: + verso i Magi/il tappeto)
+   Disposizione: La stella a sinistra dei Magi · I Re Magi a destra dei Magi · La famiglia a sinistra di Maria · L’Adorazione a destra di Giuseppe
+   (0 = mangiatoia, più grande = più vicino ai Magi) · art: immagine in art/ · focus: 0 = mostra la parte alta, 1 = la parte bassa */
+const STATIONS = [
+  { side:1, x:1.35, z:4.4, art:"art/magi.jpg", focus:.5,
+    kicker:"Capitolo 1 · Il viaggio", title:"I Re Magi",
+    body:["Da terre lontane, alcuni sapienti osservano una stella straordinaria e si mettono in cammino. La tradizione li ricorda come Gaspare, Melchiorre e Baldassarre. Attraversano deserti e regni, seguendo la luce che li conduce verso il Re appena nato.",
+          "Il loro viaggio diventa il simbolo di chi cerca con fede, perseveranza e meraviglia."],
+    quote:"La luce guida chi non smette di cercare.",
+    note:"Matteo 2, 1–12", num:"01 / 09",
+    guide:"Eccoli! I Magi vengono da molto lontano e viaggiano seguendo una stella." },
+  { side:1, x:1.75, z:-.1, art:"art/adorazione.jpg", focus:.75,
+    kicker:"Capitolo 6 · I doni", title:"L’Adorazione dei Re Magi",
+    body:["Giunti a Betlemme, i Re Magi si prostrarono davanti a Gesù e gli offrirono i loro doni: oro, incenso e mirra. L’oro era il segno della regalità, l’incenso richiamava la sua divinità, la mirra parlava della sua futura sofferenza e morte.",
+          "I Magi, venuti da terre lontane, rappresentano tutti i popoli che si avvicinano a Cristo. Il loro gesto ci insegna che il valore di un dono non sta nel suo prezzo, ma nell’amore con cui viene offerto."],
+    quote:"Il dono più prezioso è un cuore capace di amare.",
+    note:"Matteo 2, 1–12", num:"06 / 09",
+    guide:"Oro, incenso e mirra: tre doni che raccontano chi è questo bambino." },
+  { side:-1, x:-4.4, z:4.0, art:"art/stella.jpg", focus:.5,
+    kicker:"Capitolo 3 · La stella", title:"La stella di Betlemme",
+    body:["Nel cielo brillò una stella straordinaria, segno della nascita del Salvatore. Non era solo una luce da ammirare, ma una guida che indicava la strada ai Magi, anche quando il cammino sembrava incerto.",
+          "Ancora oggi, quella stella ci ricorda che Dio non smette di illuminare il nostro cammino: nei gesti di bontà, nelle parole vere, nelle persone che ci aiutano a ritrovare la speranza."],
+    quote:"Anche la notte più buia può essere illuminata da una luce.",
+    note:"Matteo 2, 1–10", num:"03 / 09",
+    guide:"La stella si è fermata proprio qui. Il viaggio è finito: guarda la mangiatoia!" },
+  { side:-1, x:-1.75, z:-.1, art:"art/famiglia.jpg", focus:.6,
+    kicker:"Capitolo 2 · La Sacra Famiglia", title:"Maria, Giuseppe e Gesù",
+    body:["Maria e Giuseppe, dopo un lungo viaggio, arrivarono a Betlemme. Non trovarono un luogo adatto, ma in una semplice stalla si compì il mistero più grande.",
+          "Maria accolse con amore il Figlio di Dio, Giuseppe lo custodì con fede e coraggio. In quella notte speciale, la loro famiglia diventò il segno di una speranza nuova per tutto il mondo."],
+    quote:"Nel silenzio di una stalla, l’amore di una famiglia accolse la luce del mondo.",
+    note:"Luca 2, 1–7", num:"02 / 09",
+    guide:"Maria, Giuseppe e Gesù: il cuore del presepe. Fermiamoci un momento in silenzio." }
+];
+
+/* ---------- Tappeto rosso: parte dove ti trovi tu, passa nel varco tra i due Magi e arriva davanti alla mangiatoia ----------
+   punti [x, z] in unità del modello rispetto alla mangiatoia; il primo è calcolato da magiFront + carpetLead */
+const GAP = -1.825;                    // centro del varco tra i due gruppi di Magi
+const CARPET = [[GAP, (CFG.magiFront - CFG.mangerZ) + CFG.carpetLead/CFG.modelScale], [GAP, 4.6], [GAP, 3.3], [-1.7, 2.8], [-1.35, 2.4], [-.95, 2.15], [-.55, 2.0]];
+
+/* ---------- Utilità ---------- */
+const easeOutBack = t => { const c=1.70158; return 1 + (c+1)*Math.pow(t-1,3) + c*Math.pow(t-1,2); };
+const clamp01 = v => Math.min(1, Math.max(0, v));
+const FONT = "system-ui,-apple-system,'Segoe UI',sans-serif", SERIF = "Georgia,'Times New Roman',serif";
+
+function roundRect(g,x,y,w,h,r){
+  g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r);
+  g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath();
+}
+function wrap(g, text, maxW){
+  const lines = []; let line = "";
+  for (const w of text.split(" ")){
+    const test = line ? line+" "+w : w;
+    if (g.measureText(test).width > maxW && line){ lines.push(line); line = w; } else line = test;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+function star(g,x,y,r){
+  g.beginPath();
+  for (let i=0;i<8;i++){ const a=i*Math.PI/4 - Math.PI/2, rr = i%2 ? r*0.38 : r; g.lineTo(x+Math.cos(a)*rr, y+Math.sin(a)*rr); }
+  g.closePath(); g.fill();
+}
+
+/* ---------- Poster (disegnati su canvas, nello stile delle carte "Luce e Fede") ---------- */
+const PW = 1024, PH = Math.round(PW * CFG.posterH / CFG.posterW);
+const GOLD = "rgba(255,210,122,.95)";
+const loadImg = src => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
+const logoPromise = loadImg("logo.png");
+
+function drawPoster(st, idx, total, art, logo, cv){
+  const c = cv || document.createElement("canvas"); c.width = PW; c.height = PH;
+  const g = c.getContext("2d"), M = 92, W = PW - M*2, CX = PW/2;
+
+  // fondo blu notte con stelline
+  roundRect(g,8,8,PW-16,PH-16,34);
+  const bg = g.createLinearGradient(0,0,PW*.5,PH);
+  bg.addColorStop(0,"#0c1c48"); bg.addColorStop(.5,"#0a1431"); bg.addColorStop(1,"#070d24");
+  g.fillStyle = bg; g.fill();
+  g.save(); g.clip();
+  let seed = 11 + idx*17; const rnd = () => (seed = (seed*16807) % 2147483647)/2147483647;
+  for (let i=0;i<170;i++){
+    g.fillStyle = `rgba(190,215,255,${.12 + rnd()*.5})`;
+    g.beginPath(); g.arc(rnd()*PW, rnd()*PH, .6 + rnd()*1.5, 0, Math.PI*2); g.fill();
+  }
+
+  // illustrazione in alto, che sfuma nel blu
+  const AX = 46, AY = 46, AW = PW - 92, AH = 640;
+  if (art){
+    g.save(); roundRect(g,AX,AY,AW,AH,24); g.clip();
+    const k = Math.max(AW/art.width, AH/art.height), dw = art.width*k, dh = art.height*k;
+    g.drawImage(art, AX - (dw-AW)/2, AY - (dh-AH)*(st.focus ?? .5), dw, dh);
+    const fd = g.createLinearGradient(0, AY+AH-240, 0, AY+AH);
+    fd.addColorStop(0,"rgba(10,20,49,0)"); fd.addColorStop(1,"rgba(10,20,49,1)");
+    g.fillStyle = fd; g.fillRect(AX, AY+AH-240, AW, 240);
+    g.restore();
+  }
+  g.restore();
+
+  // cornice dorata doppia con stelline negli angoli
+  roundRect(g,14,14,PW-28,PH-28,30); g.lineWidth = 4; g.strokeStyle = "rgba(255,210,122,.9)"; g.stroke();
+  roundRect(g,30,30,PW-60,PH-60,22); g.lineWidth = 1.6; g.strokeStyle = "rgba(255,210,122,.4)"; g.stroke();
+  g.fillStyle = GOLD;
+  for (const [x,y] of [[22,22],[PW-22,22],[22,PH-22],[PW-22,PH-22]]) star(g, x, y, 11);
+
+  // etichetta del capitolo, a cavallo tra illustrazione e testo
+  g.textBaseline = "middle"; g.textAlign = "center";
+  const py = AY + AH - 6;
+  g.font = `600 31px ${FONT}`; if ("letterSpacing" in g) g.letterSpacing = "5px";
+  const kick = st.kicker.toUpperCase(), pw = g.measureText(kick).width + 84;
+  roundRect(g, CX-pw/2, py-34, pw, 68, 34); g.fillStyle = "rgba(10,20,49,.9)"; g.fill();
+  g.lineWidth = 3; g.strokeStyle = GOLD; g.stroke();
+  g.fillStyle = GOLD; g.fillText(kick, CX + 2, py + 1);
+  if ("letterSpacing" in g) g.letterSpacing = "0px";
+
+  // titolo
+  g.textBaseline = "alphabetic";
+  g.shadowColor = "rgba(255,200,110,.35)"; g.shadowBlur = 18; g.shadowOffsetY = 0;
+  let y = py + 34 + 26, tf = 104, tl;
+  for (; tf >= 80; tf -= 4){ g.font = `700 ${tf}px ${SERIF}`; tl = wrap(g, st.title, W); if (tl.length <= 1) break; }   // meglio una riga sola
+  if (tl.length > 1) for (tf = 104; tf >= 70; tf -= 4){ g.font = `700 ${tf}px ${SERIF}`; tl = wrap(g, st.title, W); if (tl.length <= 2) break; }
+  g.fillStyle = "#fff6de";
+  for (const l of tl){ y += tf*1.06; g.fillText(l, CX, y); }
+
+  // filetto con stella
+  y += 44; g.shadowColor = "transparent";
+  for (const dir of [-1,1]){
+    const x0 = CX + dir*34, x1 = CX + dir*(W/2);
+    const dv = g.createLinearGradient(x0,0,x1,0);
+    dv.addColorStop(0,"rgba(255,210,122,.95)"); dv.addColorStop(1,"rgba(255,210,122,0)");
+    g.fillStyle = dv; g.fillRect(Math.min(x0,x1), y-1.5, Math.abs(x1-x0), 3);
+  }
+  g.fillStyle = GOLD; star(g, CX, y, 17);
+  y += 30;
+
+  // frase in corsivo dorato (sta in basso, sopra il piè)
+  const footY = PH - 196;
+  let qf = 46, ql;
+  for (; qf >= 34; qf -= 2){ g.font = `italic 500 ${qf}px ${SERIF}`; ql = wrap(g, "«" + st.quote + "»", Math.min(W - 40, 660)); if (ql.length <= 3) break; }
+  const qh = ql.length*qf*1.28, qTop = footY - 34 - qh;
+
+  // corpo: si rimpicciolisce finché sta nello spazio disponibile
+  g.shadowColor = "rgba(0,0,0,.5)"; g.shadowBlur = 6; g.shadowOffsetY = 2; g.textAlign = "left";
+  const maxH = qTop - 26 - y;
+  let fs = 40, paras;
+  for (; fs >= 26; fs -= 2){
+    g.font = `400 ${fs}px ${FONT}`;
+    paras = st.body.map(p => wrap(g, p, W));
+    const h = paras.reduce((s,p) => s + p.length*fs*1.42, 0) + (paras.length-1)*fs*.55;
+    if (h <= maxH) break;
+  }
+  g.fillStyle = "rgba(247,249,253,.98)";
+  for (const p of paras){
+    for (const l of p){ y += fs*1.42; g.fillText(l, M, y); }
+    y += fs*.55;
+  }
+
+  // frase
+  g.textAlign = "center"; g.shadowColor = "rgba(255,190,90,.35)"; g.shadowBlur = 12; g.shadowOffsetY = 0;
+  g.font = `italic 500 ${qf}px ${SERIF}`; g.fillStyle = "#f6cf86";
+  let qy = qTop + qf*.95;
+  for (const l of ql){ g.fillText(l, CX, qy); qy += qf*1.28; }
+
+  // piè: filetto, fonte, numero e logo al centro
+  g.shadowColor = "transparent";
+  const fl = g.createLinearGradient(M,0,PW-M,0);
+  fl.addColorStop(0,"rgba(255,210,122,0)"); fl.addColorStop(.5,"rgba(255,210,122,.8)"); fl.addColorStop(1,"rgba(255,210,122,0)");
+  g.fillStyle = fl; g.fillRect(M, footY, W, 2.5);
+  g.font = `italic 31px ${FONT}`; g.fillStyle = "rgba(255,210,122,.92)"; g.textAlign = "left";
+  g.fillText(st.note, M, PH - 84);
+  g.fillStyle = "rgba(247,249,253,.92)"; g.font = `600 33px ${FONT}`; g.textAlign = "right";
+  g.fillText(st.num || `${idx+1} / ${total}`, PW-M, PH - 84);
+  if (logo){ const L = 150; g.drawImage(logo, CX - L/2, PH - 36 - L, L, L); }
+  return c;
+}
+function glowTexture(){
+  const w = 512, h = Math.round(w*PH/PW), ins = 36, c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const g = c.getContext("2d");
+  g.shadowColor = "#ffc861"; g.shadowBlur = 28; g.strokeStyle = "#ffd27a"; g.lineWidth = 5;
+  roundRect(g, ins, ins, w-ins*2, h-ins*2, 26); g.stroke();
+  return { c, sx: w/(w-ins*2), sy: h/(h-ins*2) };
+}
+
+/* ---------- La natività (un solo GLB) + stella ---------- */
+// Stella cometa: stella a 4 punte con corona di raggi, aloni, coda scintillante e fascio di luce sulla mangiatoia
+function starShape(n, ro, ri, rot = 0){
+  const sh = new THREE.Shape();
+  for (let i=0;i<n*2;i++){
+    const a = i*Math.PI/n + rot, r = i%2 ? ri : ro, x = Math.cos(a)*r, y = Math.sin(a)*r;
+    if (i) sh.lineTo(x, y); else sh.moveTo(x, y);
+  }
+  sh.closePath(); return sh;
+}
+function rayTexture(){
+  const c = document.createElement("canvas"); c.width = c.height = 256;
+  const g = c.getContext("2d"); g.translate(128,128);
+  for (let k=0;k<8;k++){
+    g.save(); g.rotate(k*Math.PI/4 + Math.PI/2);
+    const L = k%2 ? 74 : 126, gr = g.createLinearGradient(0,0,L,0);
+    gr.addColorStop(0,"rgba(255,238,180,.95)"); gr.addColorStop(1,"rgba(255,200,90,0)");
+    g.fillStyle = gr; g.beginPath(); g.moveTo(0,-6); g.lineTo(L,0); g.lineTo(0,6); g.closePath(); g.fill(); g.restore();
+  }
+  return new THREE.CanvasTexture(c);
+}
+function tailTexture(){
+  const c = document.createElement("canvas"); c.width = 512; c.height = 128;
+  const g = c.getContext("2d");
+  const taper = (h, a, b, blur) => {
+    const gr = g.createLinearGradient(0,0,512,0); gr.addColorStop(0,a); gr.addColorStop(1,b);
+    g.fillStyle = gr; g.shadowColor = a; g.shadowBlur = blur;
+    g.beginPath(); g.moveTo(0,64-h); g.quadraticCurveTo(200,64-h*.4,512,64); g.quadraticCurveTo(200,64+h*.4,0,64+h); g.closePath(); g.fill();
+  };
+  taper(54,"rgba(255,196,96,.5)","rgba(255,196,96,0)",26); taper(30,"rgba(255,232,170,.8)","rgba(255,232,170,0)",12); taper(11,"rgba(255,255,255,.95)","rgba(255,255,255,0)",4);
+  g.shadowBlur = 0;
+  for (let i=0;i<46;i++){ const u = Math.pow(Math.random(),1.5), x = u*500, y = 64 + (Math.random()-.5)*100*(1-u*.8);
+    g.fillStyle = `rgba(255,243,205,${.3 + Math.random()*.6})`; g.beginPath(); g.arc(x, y, .8 + Math.random()*2.2, 0, Math.PI*2); g.fill(); }
+  return new THREE.CanvasTexture(c);
+}
+function beamTexture(){
+  const c = document.createElement("canvas"); c.width = 128; c.height = 256;
+  const g = c.getContext("2d");
+  const v = g.createLinearGradient(0,0,0,256); v.addColorStop(0,"rgba(255,225,150,.9)"); v.addColorStop(1,"rgba(255,225,150,0)");
+  g.fillStyle = v; g.beginPath(); g.moveTo(52,0); g.lineTo(76,0); g.lineTo(128,256); g.lineTo(0,256); g.closePath(); g.fill();
+  g.globalCompositeOperation = "destination-in";             // bordi laterali sfumati
+  const h = g.createLinearGradient(0,0,128,0); h.addColorStop(0,"rgba(0,0,0,0)"); h.addColorStop(.5,"rgba(0,0,0,1)"); h.addColorStop(1,"rgba(0,0,0,0)");
+  g.fillStyle = h; g.fillRect(0,0,128,256);
+  return new THREE.CanvasTexture(c);
+}
+const ADD = { transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, toneMapped:false };
+function makeStar(){
+  const grp = new THREE.Group(), U = {};
+  // corpo: stella a 4 punte lunghe + stella a 8 punte più piccola, in oro luminoso
+  const mat = new THREE.MeshStandardMaterial({ color:0xffe7a8, emissive:0xffb43a, emissiveIntensity:1.6, metalness:.4, roughness:.3 });
+  const mk = (sh, depth) => { const gm = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled:true, bevelSize:.025, bevelThickness:.03, bevelSegments:2 }); gm.center(); return new THREE.Mesh(gm, mat); };
+  U.core = new THREE.Group();
+  const big = mk(starShape(4, 1, .17, Math.PI/2), .1), small = mk(starShape(8, .56, .26, Math.PI/8), .16);
+  U.core.add(big, small); U.core.scale.setScalar(.15); grp.add(U.core);
+  // aloni (grande, medio, piccolo) e corona di raggi che ruota piano
+  const glow = softGlow(); U.halos = [];
+  for (const [sz, op] of [[2.2,.16],[1.1,.3],[.5,.9]]){
+    const h = new THREE.Sprite(new THREE.SpriteMaterial({ map:glow, opacity:op, ...ADD })); h.scale.set(sz,sz,1); h.userData.base = sz; U.halos.push(h); grp.add(h);
+  }
+  U.rays = new THREE.Sprite(new THREE.SpriteMaterial({ map:rayTexture(), opacity:.8, ...ADD })); U.rays.scale.set(1.0,1.0,1); grp.add(U.rays);
+  // coda di cometa: due piani incrociati, così si vede da ogni lato
+  const L = 1.5; U.tail = new THREE.Group(); U.tail.rotation.z = .62;
+  const tt = tailTexture(), tg = new THREE.PlaneGeometry(L, .42).translate(L/2, 0, 0);
+  for (const rx of [0, Math.PI/2]){
+    const m = new THREE.Mesh(tg, new THREE.MeshBasicMaterial({ map:tt, side:THREE.DoubleSide, opacity:.95, ...ADD })); m.rotation.x = rx; U.tail.add(m);
+  }
+  // scintille che scivolano lungo la coda
+  U.sparks = [];
+  for (let i=0;i<16;i++){
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:glow, opacity:0, ...ADD })); const z = .03 + Math.random()*.05; sp.scale.set(z,z,1);
+    sp.userData = { ph:Math.random(), sp:.12 + Math.random()*.18, a:Math.random()*6.28 }; U.tail.add(sp); U.sparks.push(sp);
+  }
+  U.L = L; grp.add(U.tail);
+  // fascio di luce verso il basso (due piani incrociati) e luce calda sulle statuine
+  if (CFG.starBeam){
+    const bt = beamTexture(), bg = new THREE.PlaneGeometry(.9, CFG.starY - .35).translate(0, -(CFG.starY - .35)/2, 0);
+    for (const ry of [0, Math.PI/2]){
+      const m = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ map:bt, side:THREE.DoubleSide, opacity:.16, ...ADD })); m.rotation.y = ry; grp.add(m);
+    }
+  }
+  if (CFG.starLight){ U.light = new THREE.PointLight(0xffd9a0, 1.6, 4, 2); grp.add(U.light); }
+  grp.userData = U;
+  return grp;
+}
+function updateStar(t){                // la stella fluttua, dondola e brilla; la coda ondeggia
+  const U = starObj.userData;
+  starObj.position.set(Math.sin(t*.45)*.07, CFG.starY + Math.sin(t*1.05)*.05 + Math.sin(t*.37)*.025, -.1 + Math.cos(t*.4)*.05);
+  U.core.rotation.set(Math.sin(t*.5)*.12, Math.sin(t*.6)*.6, Math.sin(t*.8)*.08);
+  const pulse = 1 + .07*Math.sin(t*2.3) + .03*Math.sin(t*5.1);
+  U.core.scale.setScalar(.15*pulse);
+  U.halos.forEach((h, i) => { const k = pulse + (i ? 0 : .06*Math.sin(t*1.3)); h.scale.set(h.userData.base*k, h.userData.base*k, 1); });
+  U.rays.material.rotation = t*.12; U.rays.scale.setScalar(.95 + .1*Math.sin(t*3.1));
+  U.tail.rotation.z = .62 + Math.sin(t*.9)*.05; U.tail.scale.x = 1 + .06*Math.sin(t*1.7);
+  for (const sp of U.sparks){
+    const d = sp.userData, u = (t*d.sp + d.ph) % 1, w = (1-u)*.07;
+    sp.position.set(u*U.L, Math.sin(t*2.6 + d.a)*w, Math.cos(t*2.1 + d.a)*w);
+    sp.material.opacity = (1-u)*(.45 + .45*Math.sin(t*9 + d.a*7));
+  }
+  if (U.light) U.light.intensity = 1.6 + .25*Math.sin(t*2.7);
+}
+
+async function fetchModel(){
+  const grab = async url => {
+    const r = await fetch(url); if (!r.ok) throw new Error(url + ": HTTP " + r.status);
+    const total = +r.headers.get("content-length") || 0, rd = r.body && r.body.getReader();
+    if (!rd) return r.arrayBuffer();
+    const parts = []; let got = 0;
+    for (;;){
+      const { done, value } = await rd.read(); if (done) break;
+      parts.push(value); got += value.length;
+      const mb = (got/1048576).toFixed(1);
+      setStatus(total ? `Carico la natività… ${Math.min(100, Math.round(got/total*100))}% (${mb} MB)` : `Carico la natività… ${mb} MB`);
+    }
+    const u8 = new Uint8Array(got); let o = 0; for (const p of parts){ u8.set(p, o); o += p.length; }
+    return u8.buffer;
+  };
+  try { const ab = await grab(CFG.model); if (new Uint8Array(ab, 0, 4).join() === "103,108,84,70") return ab; } catch (_) {}   // prima la cartella models/
+  const rs = await fetch("nativita.txt"); if (!rs.ok) throw new Error(CFG.model + " non trovato");                          // altrimenti la copia incorporata
+  const bin = atob((await rs.text()).trim()), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8.buffer;
+}
+let cowMixer = null;
+function loadCow(model){              // carica la mucca animata e toglie quella vecchia; se qualcosa va storto resta la vecchia
+  if (!CFG.cowModel) return Promise.resolve();
+  return new Promise(resolve => {
+    new GLTFLoader().load(CFG.cowModel, gltf => {
+      try {
+        const cow = gltf.scene;
+        cow.scale.setScalar(CFG.cowScale);
+        cow.position.set(CFG.cowX, CFG.cowY, CFG.cowZ);
+        cow.rotation.y = CFG.cowTurn;
+        cow.traverse(o => {
+          if (!o.isMesh) return;
+          o.frustumCulled = false;     // il corpo si muove: non farlo sparire ai bordi dello schermo
+          for (const k of ["map","normalMap","aoMap"]) if (o.material[k]) o.material[k].anisotropy = 4;
+        });
+        let old = null;                // la vecchia mucca è il gruppo che contiene la mesh "Line01…" (corpo) e le due sfere (occhi)
+        model.traverse(o => { if (o.isMesh && o.name.startsWith("Line01_aiStandardSurface")) old = o; });
+        while (old && old.parent && old.parent !== model) old = old.parent;
+        if (old && old.parent === model){
+          model.remove(old);
+          old.traverse(o => { if (o.isMesh){ o.geometry.dispose(); const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach(m => m.dispose()); } });
+        }
+        model.add(cow);                // aggiunta dopo il blocco delle matrici: le ossa devono potersi muovere
+        if (gltf.animations.length){
+          cowMixer = new THREE.AnimationMixer(cow);
+          const a = cowMixer.clipAction(gltf.animations[0]); a.timeScale = CFG.cowSpeed; a.play();
+        }
+      } catch (e){ console.error("Mucca animata non inserita:", e); }
+      resolve();
+    }, undefined, err => { console.warn("Mucca animata non trovata, resta quella vecchia:", err); resolve(); });
+  });
+}
+async function loadNativity(){
+  setStatus("Carico la natività…");
+  const buf = await fetchModel();
+  return new Promise((resolve, reject) => {
+    new GLTFLoader().parse(buf, "", gltf => {
+      const model = gltf.scene, s = CFG.modelScale;
+      model.scale.setScalar(s);
+      model.traverse(o => { if (o.isMesh) for (const k of ["map","normalMap","aoMap"]) if (o.material[k]) o.material[k].anisotropy = 4; });
+      model.position.set(-CFG.mangerX*s, 0, -CFG.mangerZ*s);   // la mangiatoia al centro
+      model.updateMatrixWorld(true);
+      model.position.y = -new THREE.Box3().setFromObject(model).min.y;  // il punto più basso (paglia) appoggia sul pavimento
+      model.traverse(o => {
+        if (!o.isMesh) return;
+        const m = o.material;
+        if (m.alphaTest > 0){            // paglia: tanti strati con trasparenza, costosa. Materiale semplice al posto di quello fisico
+          o.material = new THREE.MeshLambertMaterial({ map:m.map, color:m.color, alphaTest:m.alphaTest, side:THREE.DoubleSide, reflectivity:0 });
+          m.dispose();
+        } else m.side = THREE.FrontSide;  // statuine chiuse: non serve disegnare anche il retro dei triangoli
+      });
+      model.updateMatrix();
+      model.traverse(o => { o.matrixAutoUpdate = false; });   // il modello non si muove: niente ricalcoli a ogni frame
+      loadCow(model).then(() => resolve(model));              // la mucca animata resta fuori dal blocco
+    }, err => reject(err));
+  });
+}
+
+/* ---------- Musica ---------- */
+// Se in audio/ c’è un file (canzone.mp3 / .m4a / .ogg / .wav) suona quello, altrimenti un carillon natalizio generato dal browser.
+let song = null, songState = "loading", actx = null, bus = null, synthTimer = 0, vol = 0, fadeT = 0, musicOn = false, step = 0, nextT = 0;
+const audioInfo = t => { const e = document.querySelector("#audioInfo"); if (e) e.textContent = t; };
+function setupSong(){
+  if (CFG.song === ""){ songState = "none"; audioInfo("🔇 Musica disattivata"); return; }
+  const list = [".mp3",".m4a",".ogg",".wav"].map(e => CFG.song + e); let k = 0;
+  song = new Audio(); song.loop = true; song.preload = "auto"; song.volume = 0;
+  const tryNext = () => {
+    if (k < list.length){ song.src = list[k++]; if (musicOn) song.play().catch(() => {}); return; }
+    song = null; songState = "none";
+    audioInfo(CFG.carillon ? "🎵 Nessun file in audio/: uso il carillon integrato" : "🔇 Nessuna canzone trovata nella cartella audio/");
+    if (musicOn && CFG.carillon) startSynth();
+  };
+  song.addEventListener("error", () => { if (songState === "loading") tryNext(); });
+  song.addEventListener("canplay", () => { if (songState === "loading"){ songState = "ok"; audioInfo("🔊 Canzone pronta: " + song.src.split("/").pop()); } });
+  song.addEventListener("playing", () => fadeSong(CFG.songVolume));
+  tryNext();
+}
+function setVol(v){ vol = v; if (song) song.volume = v; if (bus) bus.gain.value = v; }
+function fadeSong(target){          // sale o scende piano piano; a zero ferma tutto
+  clearInterval(fadeT);
+  fadeT = setInterval(() => {
+    const d = target - vol;
+    if (Math.abs(d) < .03){ setVol(target); clearInterval(fadeT); if (!target) stopMusic(); return; }
+    setVol(Math.min(1, Math.max(0, vol + Math.sign(d)*.03)));
+  }, 60);
+}
+function stopMusic(){ musicOn = false; if (song) song.pause(); if (actx){ clearInterval(synthTimer); actx.suspend(); } }
+function playSong(){                // va chiamata dentro un tocco dell’utente: i browser non permettono l’audio automatico prima
+  if (musicOn) return; musicOn = true;
+  if (song && songState !== "none") song.play().catch(e => { if (e.name === "NotAllowedError") musicOn = false; });
+  else if (CFG.carillon) startSynth();
+}
+
+// carillon: arpeggi di campanelle su Do - La min - Fa - Sol, con un po’ di eco
+const CHORDS = [[60,64,67,72],[57,60,64,69],[53,57,60,65],[55,59,62,67]];
+const midi = n => 440*Math.pow(2, (n-69)/12);
+function bell(t, f, v){
+  const g = actx.createGain(), o1 = actx.createOscillator(), o2 = actx.createOscillator(), g2 = actx.createGain();
+  o1.frequency.value = f; o2.frequency.value = f*2.76; g2.gain.value = .22;   // la seconda onda dà il suono di campana
+  o1.connect(g); o2.connect(g2); g2.connect(g); g.connect(bus);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(v, t+.012); g.gain.exponentialRampToValueAtTime(.0001, t+2);
+  o1.start(t); o2.start(t); o1.stop(t+2.1); o2.stop(t+2.1);
+}
+function playStep(t){
+  const bar = Math.floor(step/8) % 4, i = step % 8, ch = CHORDS[bar];
+  bell(t, midi(ch[[0,1,2,3,2,1,2,1][i]]), .26);
+  if (i === 0) bell(t, midi(ch[0]-12), .34);
+  if (i === 0 || i === 4 || i === 6) bell(t, midi(ch[(bar*3 + i)%4] + 12), .18);
+}
+function startSynth(){
+  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+  actx.resume();
+  if (!bus){
+    bus = actx.createGain(); bus.gain.value = 0; bus.connect(actx.destination);
+    const dl = actx.createDelay(1), fb = actx.createGain(), wet = actx.createGain();
+    dl.delayTime.value = .36; fb.gain.value = .38; wet.gain.value = .5;
+    bus.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(actx.destination);
+  }
+  nextT = actx.currentTime + .15; clearInterval(synthTimer);
+  synthTimer = setInterval(() => { while (nextT < actx.currentTime + .6){ playStep(nextT); nextT += .5; step++; } }, 200);
+  fadeSong(CFG.songVolume);
+}
+
+/* ---------- La guida: il logo ci accompagna lungo la visita ---------- */
+const GUIDE = {
+  hello: "Ciao! Sono la guida dell’ISISS Matese. Questa è la natività della nostra scuola: ti accompagno io nella visita."
+};
+const guide = { grp:null, logo:null, hit:null, bubble:null, bCanvas:null, bTex:null, pos:new THREE.Vector3(), ready:false,
+                now:0, msgUntil:0, nextAt:0, endAt:0, introDone:false, tipI:0, turn:0 };
+const right = new THREE.Vector3(), tgt = new THREE.Vector3(), v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
+
+function say(text, secs = 7){
+  const c = guide.bCanvas, g = c.getContext("2d"), W = c.width, H = c.height, tail = 56, bh = H - tail - 16;
+  g.clearRect(0,0,W,H);
+  roundRect(g, 8, 8, W-16, bh, 44);
+  const bg = g.createLinearGradient(0,0,0,H); bg.addColorStop(0,"rgba(30,50,110,.93)"); bg.addColorStop(1,"rgba(10,18,48,.96)");
+  g.fillStyle = bg; g.fill(); g.lineWidth = 5; g.strokeStyle = GOLD; g.stroke();
+  g.beginPath(); g.moveTo(W/2-36, bh+4); g.lineTo(W/2, H-6); g.lineTo(W/2+36, bh+4); g.closePath();
+  g.fillStyle = "rgba(14,24,60,.96)"; g.fill();
+  g.fillStyle = "#fff6de"; g.textAlign = "center";
+  let fs = 62, lines;
+  for (; fs >= 34; fs -= 2){ g.font = `600 ${fs}px ${FONT}`; lines = wrap(g, text, W-110); if (lines.length*fs*1.3 <= bh-50) break; }
+  let y = 8 + (bh - lines.length*fs*1.3)/2 + fs*.98;
+  for (const l of lines){ g.fillText(l, W/2, y); y += fs*1.3; }
+  guide.bTex.needsUpdate = true;
+  guide.msgUntil = guide.now + secs;
+}
+function onVisit(i){ /* la guida non commenta i poster: dice solo la presentazione iniziale */ }
+function updateGuide(dt, t, since){
+  const G = guide; G.now = t;
+  const e = Math.max(0.001, easeOutBack(clamp01((since - 1.2)/.7)));
+  G.grp.visible = since > 1.2; G.grp.scale.setScalar(e);
+  if (!G.introDone && since > 1.9){ G.introDone = true; say(GUIDE.hello, 10); }   // si presenta una volta sola, poi resta in silenzio
+
+  right.set(-fwd.z, 0, fwd.x);                 // sta accanto a te, un po’ avanti sulla destra
+  tgt.copy(head).addScaledVector(right, CFG.guideSide).addScaledVector(fwd, CFG.guideAhead);
+  tgt.y = head.y - .12 + Math.sin(t*1.6)*.03;
+  if (!G.ready){ G.pos.copy(tgt); G.ready = true; }
+  G.pos.lerp(tgt, 1 - Math.exp(-dt*2.5));       // ti segue con un po’ di ritardo, come se fluttuasse
+  G.grp.position.copy(G.pos);
+  G.grp.lookAt(head.x, G.pos.y, head.z);
+  G.logo.rotation.set(0, Math.sin(t*.9)*.25, Math.sin(t*1.3)*.05);
+
+  const k = t < G.msgUntil ? 1 : 0.001, b = G.bubble.scale.x;
+  G.bubble.scale.setScalar(b + (k - b)*(1 - Math.exp(-dt*8)));
+  G.bubble.visible = b > .01 || k === 1;
+}
+
+function makeCarpet(){               // nastro che segue la curva dei punti CARPET, appoggiato sul pavimento
+  const s = CFG.modelScale, w = CFG.carpetW;
+  const curve = new THREE.CatmullRomCurve3(CARPET.map(([x, z]) => new THREE.Vector3(x*s, CFG.carpetY, z*s)), false, "centripetal");
+  const N = 90, pos = [], nor = [], uv = [], idx = []; let len = 0, prev = null;
+  for (let i=0; i<=N; i++){
+    const p = curve.getPoint(i/N), tg = curve.getTangent(i/N), l = Math.hypot(tg.x, tg.z) || 1;
+    const ox = -tg.z/l*w/2, oz = tg.x/l*w/2;                         // perpendicolare orizzontale = metà larghezza
+    if (prev) len += p.distanceTo(prev); prev = p;
+    pos.push(p.x-ox, p.y, p.z-oz, p.x+ox, p.y, p.z+oz); nor.push(0,1,0, 0,1,0); uv.push(0, len/w, 1, len/w);
+    if (i < N){ const a = i*2; idx.push(a, a+1, a+2, a+1, a+3, a+2); }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  const tex = carpetTexture();
+  const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color:0xffffff, map:tex }));   // rosso con il logo inciso
+  m.renderOrder = 1; return m;
+}
+
+function carpetTexture(){            // tappeto rosso con il logo ISISS Matese inciso (tono su tono) e filetto dorato
+  const TW = 512, TH = 768, c = document.createElement("canvas"); c.width = TW; c.height = TH;
+  const g = c.getContext("2d"), RED = "#b3142c";
+  g.fillStyle = RED; g.fillRect(0, 0, TW, TH);
+  g.strokeStyle = "rgba(255,210,122,.85)"; g.lineWidth = 5; g.strokeRect(22, -10, TW-44, TH+20);       // filetto dorato ai lati (si ripete senza stacchi)
+  g.strokeStyle = "rgba(255,210,122,.45)"; g.lineWidth = 2; g.strokeRect(36, -10, TW-72, TH+20);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+  tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1, 1/1.5);          // una tessera = 1,5 larghezze di tappeto: un logo ogni 1,5 larghezze
+  logoPromise.then(img => {
+    if (!img) return;
+    const L = 400, x = (TW - L)/2, y = (TH - L)/2;
+    // silhouette del logo (solo l'alpha) e dettagli interni in scala di grigi, per un'incisione che mantiene scritte e icone
+    const sil = document.createElement("canvas"); sil.width = sil.height = L;
+    const sg = sil.getContext("2d"); sg.drawImage(img, 0, 0, L, L);
+    const id = sg.getImageData(0, 0, L, L), d = id.data, eng = sg.createImageData(L, L), e = eng.data;
+    for (let i=0; i<d.length; i+=4){
+      const lum = (.3*d[i] + .59*d[i+1] + .11*d[i+2]) / 255, k = .42 + .38*lum;          // più chiaro = meno profondo
+      e[i] = 179*k*.62; e[i+1] = 20*k*.62; e[i+2] = 44*k*.62; e[i+3] = d[i+3];            // rosso scuro, incavato
+    }
+    const tint = (col) => { const t = document.createElement("canvas"); t.width = t.height = L; const tg = t.getContext("2d");
+      tg.drawImage(sil, 0, 0); tg.globalCompositeOperation = "source-in"; tg.fillStyle = col; tg.fillRect(0, 0, L, L); return t; };
+    const hi = tint("rgba(255,170,170,.55)"), lo = tint("rgba(40,0,8,.65)");
+    const body = document.createElement("canvas"); body.width = body.height = L; body.getContext("2d").putImageData(eng, 0, 0);
+    g.drawImage(hi, x+2.5, y+2.5);     // bordo illuminato in basso a destra
+    g.drawImage(lo, x-2.5, y-2.5);     // ombra interna in alto a sinistra
+    g.drawImage(body, x, y);           // fondo dell'incisione
+    tex.needsUpdate = true;
+  });
+  return tex;
+}
+
+function makeSnow(){                 // fiocchi come quadratini sempre rivolti verso di te; la caduta è calcolata dalla GPU
+  const N = CFG.snowCount, cn = [[-1,-1],[1,-1],[1,1],[-1,1]];
+  const pos = new Float32Array(N*12), corner = new Float32Array(N*8), seed = new Float32Array(N*16), size = new Float32Array(N*4), idx = new Uint32Array(N*6);
+  for (let i=0;i<N;i++){
+    const sx = Math.random(), sy = Math.random(), sz = Math.random(), sw = .25 + Math.random()*.4, sz2 = .008 + Math.random()*.014;
+    for (let v=0; v<4; v++){
+      corner.set(cn[v], (i*4+v)*2); seed.set([sx, sy, sz, sw], (i*4+v)*4); size[i*4+v] = sz2;
+    }
+    idx.set([0,1,2,0,2,3].map(k => k + i*4), i*6);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("corner", new THREE.BufferAttribute(corner, 2));
+  geo.setAttribute("seed", new THREE.BufferAttribute(seed, 4));
+  geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  const mat = new THREE.ShaderMaterial({
+    transparent:true, depthWrite:false, side:THREE.DoubleSide,
+    uniforms:{ uTime:{value:0}, uR:{value:CFG.snowRadius}, uH:{value:CFG.snowHeight}, uHead:{value:new THREE.Vector3()}, uFade:{value:0} },
+    vertexShader:`
+      uniform float uTime, uR, uH; uniform vec3 uHead;
+      attribute vec2 corner; attribute vec4 seed; attribute float aSize;
+      varying vec2 vC; varying float vA;
+      void main(){
+        float D = 2.0*uR;
+        float px = mod(seed.x*D + sin(uTime*.6 + seed.y*30.0)*.25 - uHead.x + uR, D) - uR + uHead.x;   // i fiocchi restano intorno a te
+        float pz = mod(seed.z*D + cos(uTime*.5 + seed.x*30.0)*.25 - uHead.z + uR, D) - uR + uHead.z;
+        float py = mod(seed.y*uH - uTime*seed.w, uH);                                                   // e cadono dall’alto
+        vec3 c = vec3(px, py, pz);
+        vec3 r = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+        vec3 u = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+        float d = distance(c, cameraPosition);
+        vA = smoothstep(.25, .9, d) * smoothstep(0., .35, py) * smoothstep(uH, uH-.5, py);              // spariscono vicino a te, a terra e in alto
+        vC = corner;
+        gl_Position = projectionMatrix * viewMatrix * vec4(c + (r*corner.x + u*corner.y)*aSize, 1.);
+      }`,
+    fragmentShader:`
+      uniform float uFade; varying vec2 vC; varying float vA;
+      void main(){ float a = smoothstep(1., .25, length(vC)) * vA * .9 * uFade; if (a < .01) discard; gl_FragColor = vec4(.96, .98, 1., a); }`
+  });
+  const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; m.renderOrder = 5;
+  return m;
+}
+
+function softGlow(){
+  const c = document.createElement("canvas"); c.width = c.height = 128;
+  const g = c.getContext("2d"), r = g.createRadialGradient(64,64,4,64,64,64);
+  r.addColorStop(0,"rgba(255,215,130,.8)"); r.addColorStop(.5,"rgba(255,190,90,.22)"); r.addColorStop(1,"rgba(255,190,90,0)");
+  g.fillStyle = r; g.fillRect(0,0,128,128); return new THREE.CanvasTexture(c);
+}
+function shadowTexture(){            // ombra morbida sul pavimento, per ancorare la natività alla stanza
+  const c = document.createElement("canvas"); c.width = c.height = 256;
+  const g = c.getContext("2d"), r = g.createRadialGradient(128,128,10,128,128,128);
+  r.addColorStop(0,"rgba(0,0,0,.8)"); r.addColorStop(.6,"rgba(0,0,0,.38)"); r.addColorStop(1,"rgba(0,0,0,0)");
+  g.fillStyle = r; g.fillRect(0,0,256,256); return new THREE.CanvasTexture(c);
+}
+
+/* ---------- Scena ---------- */
+let scene, camera, renderer, root, nat, starObj, session = null, last = null, startTime = 0;
+let PR = 1, PR_MAX = 1, fpsT = 0, fpsN = 0;
+let xrOK = false, xrChecked = false, modelOK = false, desktop = false, floorMesh = null;
+const D = { x:0, z:0, yaw:0, pitch:0, walk:0, keys:{}, drag:false };
+let roomEnv, hemi, sun, snow = null, gripCount = 0, gripHold = 0;
+const S = { placed:false, placedAt:0 };
+const stations = [];
+const head = new THREE.Vector3(), fwd = new THREE.Vector3(), look = new THREE.Vector3(), tmp = new THREE.Vector3();
+
+function init(){
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 30);
+  renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+  PR_MAX = Math.min(devicePixelRatio, 1.5); PR = PR_MAX;
+  renderer.setPixelRatio(PR);
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 0);
+  renderer.xr.enabled = true;
+  renderer.xr.setReferenceSpaceType("local-floor");
+  document.body.appendChild(renderer.domElement);
+
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = CFG.exposure;
+  renderer.xr.setFramebufferScaleFactor(CFG.xrScale);
+  renderer.xr.setFoveation(1);       // il Quest sfuoca i bordi della vista: meno lavoro per la GPU
+
+  // luci: ambiente morbido (PBR) + luci dirette; se il visore stima la luce della stanza, usa quella
+  roomEnv = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environment = roomEnv; scene.environmentIntensity = .6;
+  hemi = new THREE.HemisphereLight(0xffffff, 0x9a7a55, 2.2); scene.add(hemi);
+  sun = new THREE.DirectionalLight(0xfff0d8, 2.6); sun.position.set(1.5, 4, 2.5); scene.add(sun);
+  const xrLight = new XREstimatedLight(renderer);
+  xrLight.addEventListener("estimationstart", () => {
+    scene.add(xrLight); hemi.visible = sun.visible = false;
+    if (xrLight.environment) scene.environment = xrLight.environment;
+  });
+  xrLight.addEventListener("estimationend", () => { scene.remove(xrLight); hemi.visible = sun.visible = true; scene.environment = roomEnv; });
+
+  // pavimento scuro, visibile solo nell’anteprima da computer (sul visore c’è la stanza vera)
+  floorMesh = new THREE.Mesh(new THREE.CircleGeometry(18, 64).rotateX(-Math.PI/2), new THREE.MeshStandardMaterial({ color:0x141f45, roughness:.95, metalness:0 }));
+  floorMesh.position.y = -0.002; floorMesh.visible = false; scene.add(floorMesh);
+
+  root = new THREE.Group(); root.visible = false; scene.add(root);
+  if (CFG.snow){ snow = makeSnow(); scene.add(snow); }
+
+  // la natività: davanti a te c'è il corridoio, in fondo la mangiatoia; i Magi arrivano verso di te
+  const s = CFG.modelScale;
+  nat = new THREE.Group(); nat.position.set(-CARPET[0][0]*s, 0, -CARPET[0][1]*s); root.add(nat);   // il primo punto del tappeto è dove ti trovi tu
+  nat.add(makeCarpet());
+  const shTex = shadowTexture();
+  for (const [x, z, w, d] of [[0, -.56, 5.4, 4.6], [-.39, 4.4, 2.4, 2.8], [-2.99, 4.0, 1.8, 2.7]]){   // sotto la paglia e sotto i due gruppi di Magi
+    const sh = new THREE.Mesh(new THREE.PlaneGeometry(1,1).rotateX(-Math.PI/2),
+      new THREE.MeshBasicMaterial({ map:shTex, transparent:true, depthWrite:false, opacity:.6, toneMapped:false }));
+    sh.scale.set(w*s, 1, d*s); sh.position.set(x*s, .004, z*s); sh.renderOrder = 0; nat.add(sh);
+  }
+  if (CFG.showStar){
+    starObj = makeStar(); starObj.position.set(0, CFG.starY, -.1); nat.add(starObj);
+  }
+
+  const glow = glowTexture();
+  const glowTex = new THREE.CanvasTexture(glow.c); glowTex.colorSpace = THREE.SRGBColorSpace;
+  const n = STATIONS.length;
+
+  STATIONS.forEach((st, i) => {
+    // i poster stanno ai lati della natività, accanto ai personaggi di cui parlano, e si girano un po’ verso di te
+    const grp = new THREE.Group();
+    grp.position.set(nat.position.x + st.x*s, 0, nat.position.z + st.z*s);
+    grp.rotation.y = -st.side * (Math.PI/2 - CFG.turn);
+
+    const pcv = drawPoster(st, i, n, null, null);
+    const tex = new THREE.CanvasTexture(pcv);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+    Promise.all([loadImg(st.art), logoPromise]).then(([art, lg]) => { drawPoster(st, i, n, art, lg, pcv); tex.needsUpdate = true; });
+    const poster = new THREE.Group();
+    poster.position.set(0, CFG.posterY, 0);
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(CFG.posterW, CFG.posterH),
+      new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false, side:THREE.DoubleSide, toneMapped:false }));
+    glass.renderOrder = 2;
+    const halo = new THREE.Mesh(new THREE.PlaneGeometry(CFG.posterW*glow.sx, CFG.posterH*glow.sy),
+      new THREE.MeshBasicMaterial({ map:glowTex, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, opacity:.2, toneMapped:false }));
+    halo.position.z = -.004; halo.renderOrder = 1;
+    poster.add(halo, glass);
+
+    grp.add(poster); root.add(grp);
+    stations.push({ poster, halo, h:0, visited:false, dwell:0 });
+  });
+
+  // la guida (il logo) e il mirino per riposizionare la natività
+  guide.grp = new THREE.Group(); guide.grp.visible = false; scene.add(guide.grp);
+  const gMat = new THREE.MeshBasicMaterial({ transparent:true, side:THREE.DoubleSide, depthWrite:false, toneMapped:false });
+  new THREE.TextureLoader().load(CFG.guide, tx => { tx.colorSpace = THREE.SRGBColorSpace; tx.anisotropy = 8; gMat.map = tx; gMat.needsUpdate = true; });
+  guide.logo = new THREE.Mesh(new THREE.PlaneGeometry(CFG.guideSize, CFG.guideSize), gMat); guide.logo.renderOrder = 3;
+  guide.hit = new THREE.Mesh(new THREE.PlaneGeometry(CFG.guideSize*1.9, CFG.guideSize*1.9),
+    new THREE.MeshBasicMaterial({ map:softGlow(), transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, opacity:.35, toneMapped:false }));
+  guide.hit.position.z = -.01; guide.hit.renderOrder = 2;
+  guide.bCanvas = document.createElement("canvas"); guide.bCanvas.width = 1024; guide.bCanvas.height = 460;
+  guide.bTex = new THREE.CanvasTexture(guide.bCanvas); guide.bTex.colorSpace = THREE.SRGBColorSpace; guide.bTex.anisotropy = 8;
+  guide.bubble = new THREE.Mesh(new THREE.PlaneGeometry(.64, .287), new THREE.MeshBasicMaterial({ map:guide.bTex, transparent:true, depthWrite:false, toneMapped:false }));
+  guide.bubble.position.set(0, CFG.guideSize*.5 + .17, 0); guide.bubble.scale.setScalar(.001); guide.bubble.renderOrder = 4;
+  guide.grp.add(guide.hit, guide.logo, guide.bubble);
+
+  // controller: nessun pulsante cambia i messaggi della guida. Solo: tieni premuti entrambi i grip per 1 secondo = rimetti la natività davanti a te
+  for (let i=0;i<2;i++){
+    const ctl = renderer.xr.getController(i);
+    ctl.addEventListener("squeezestart", () => { gripCount++; });
+    ctl.addEventListener("squeezeend", () => { gripCount = Math.max(0, gripCount-1); });
+    ctl.addEventListener("disconnected", () => { gripCount = 0; });
+    ctl.addEventListener("select", () => { if (!musicOn) playSong(); });   // se il browser aveva bloccato la musica, riprova al primo tocco
+    scene.add(ctl);
+  }
+  setupDesktopControls();
+  renderer.setAnimationLoop(render);
+  addEventListener("resize", () => {
+    camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+    if (!renderer.xr.isPresenting) renderer.setSize(innerWidth, innerHeight);
+  });
+}
+
+// Mette la natività sul pavimento davanti a te; gli spostamenti successivi sono dolci
+function place(){
+  S.tx = head.x; S.ty = 0; S.tz = head.z; S.tyaw = Math.atan2(-fwd.x, -fwd.z);
+  if (!S.placed){ root.position.set(S.tx, 0, S.tz); root.rotation.y = S.tyaw; S.placed = true; S.placedAt = -1; }
+  root.visible = true;
+}
+
+/* ---------- Anteprima da computer: cammini con WASD e guardi trascinando il mouse ---------- */
+const EYE = 1.6;
+function setupDesktopControls(){
+  const cv = renderer.domElement;
+  cv.addEventListener("pointerdown", e => { if (!desktop) return; D.drag = true; cv.classList.add("drag"); cv.setPointerCapture(e.pointerId); if (!musicOn) playSong(); });
+  addEventListener("pointerup", () => { D.drag = false; cv.classList.remove("drag"); });
+  addEventListener("pointermove", e => {
+    if (!D.drag || !desktop) return;
+    D.yaw -= e.movementX*.004; D.pitch = Math.max(-1.2, Math.min(1.2, D.pitch - e.movementY*.004));
+  });
+  cv.addEventListener("wheel", e => { if (desktop){ D.walk -= e.deltaY*.0025; e.preventDefault(); } }, { passive:false });
+  addEventListener("keydown", e => {
+    const k = e.key.toLowerCase(); D.keys[k] = true;
+    if (!desktop) return;
+    if (k === "r") resetVisit();
+    if (k === "m"){ if (musicOn) fadeSong(0); else playSong(); }
+    if (k.startsWith("arrow") || k === " ") e.preventDefault();
+  });
+  addEventListener("keyup", e => { D.keys[e.key.toLowerCase()] = false; });
+  addEventListener("blur", () => { D.keys = {}; });
+}
+function moveCamera(dt){
+  const K = D.keys, sp = (K.shift ? 2.6 : 1.3)*dt;
+  const f = (K.w||K.arrowup ? 1 : 0) - (K.s||K.arrowdown ? 1 : 0) + D.walk, r = (K.d ? 1 : 0) - (K.a ? 1 : 0);
+  D.walk = 0;
+  if (K.arrowleft) D.yaw += 1.6*dt;
+  if (K.arrowright) D.yaw -= 1.6*dt;
+  const sy = Math.sin(D.yaw), cy = Math.cos(D.yaw);
+  D.x += (-sy*f + cy*r)*sp; D.z += (-cy*f - sy*r)*sp;
+  camera.position.set(D.x, EYE, D.z);
+  camera.rotation.set(D.pitch, D.yaw, 0, "YXZ");
+}
+function resetVisit(){
+  last = null; startTime = 0; S.placed = false; root.visible = false; gripCount = 0; gripHold = 0;
+  guide.introDone = false; guide.ready = false; guide.msgUntil = 0;
+  stations.forEach(st => { st.visited = false; st.dwell = 0; });
+  D.x = 0; D.z = 0; D.yaw = 0; D.pitch = -0.05;
+}
+function startDesktop(){
+  playSong();                                   // parte col clic sul bottone
+  desktop = true; resetVisit();
+  document.body.classList.add("pc");
+  renderer.setClearColor(0x0d1630, 1); scene.fog = new THREE.Fog(0x0d1630, 8, 22); floorMesh.visible = true;
+  ui.classList.add("hidden"); document.querySelector("#hud").classList.remove("hidden"); document.querySelector("#dot").classList.remove("hidden");
+}
+
+/* ---------- Sessione AR ---------- */
+async function startAR(){
+  playSong();   // parte col tocco sul bottone: i browser non permettono l’audio prima di un gesto
+  try {
+    session = await navigator.xr.requestSession("immersive-ar", {
+      optionalFeatures: ["local-floor","bounded-floor","hand-tracking","light-estimation"]
+    });
+  } catch (e) { fadeSong(0); setStatus("Impossibile avviare la sessione AR: " + e.message); return; }
+  desktop = false; document.body.classList.remove("pc"); renderer.setClearColor(0x000000, 0); scene.fog = null; floorMesh.visible = false;
+  await renderer.xr.setSession(session);
+  ui.classList.add("hidden");
+  last = null; startTime = 0; S.placed = false; root.visible = false; gripCount = 0; gripHold = 0;
+  guide.introDone = false; guide.ready = false; guide.msgUntil = 0; guide.nextAt = 0; guide.endAt = 0; guide.turn = 0; stations.forEach(st => { st.visited = false; st.dwell = 0; });
+  renderer.xr.getReferenceSpace()?.addEventListener?.("reset", () => { S.placed = false; startTime = 0; });   // se il visore ricentra la stanza
+  session.addEventListener("end", () => {
+    session = null; fadeSong(0); ui.classList.remove("hidden");
+    setStatus("Sessione terminata. Puoi rientrare quando vuoi.");
+    startBtn.textContent = "Rientra nell’esperienza";
+  }, { once:true });
+}
+
+/* ---------- Aggiornamento per frame ---------- */
+function update(dt, t){
+  if (cowMixer) cowMixer.update(dt);
+  const cam = desktop ? camera : renderer.xr.getCamera();
+  head.setFromMatrixPosition(cam.matrixWorld);
+  cam.getWorldDirection(look);
+  fwd.set(look.x, 0, look.z);
+  if (fwd.lengthSq() < 1e-4) fwd.set(0,0,-1);
+  fwd.normalize();
+
+  // la scena compare solo quando il visore ha una posizione valida e guardi più o meno avanti (non su/giù)
+  if (!S.placed && ((head.x === 0 && head.y === 0 && head.z === 0) || Math.abs(look.y) > .85)){ startTime = 0; return; }
+  if (!startTime) startTime = t;
+  if (!S.placed){
+    if (t - startTime < CFG.spawnDelay) return;
+    place();
+  }
+  gripHold = gripCount >= 2 ? gripHold + dt : 0;       // due grip tenuti 1 secondo: rimette la natività davanti a te
+  if (gripHold > 1){ place(); gripHold = -999; }
+  if (S.placedAt < 0) S.placedAt = t;
+  const kp = 1 - Math.exp(-dt*4);               // spostamento dolce della natività
+  root.position.x += (S.tx - root.position.x)*kp; root.position.y += (S.ty - root.position.y)*kp; root.position.z += (S.tz - root.position.z)*kp;
+  root.rotation.y += Math.atan2(Math.sin(S.tyaw - root.rotation.y), Math.cos(S.tyaw - root.rotation.y))*kp;
+  const since = t - S.placedAt, cosGaze = Math.cos(THREE.MathUtils.degToRad(CFG.gazeDeg));
+
+  // la natività compare per prima, poi i poster uno dopo l’altro
+  nat.scale.setScalar(Math.max(0.001, easeOutBack(clamp01(since/1.0))));
+  if (snow){ const u = snow.material.uniforms; u.uTime.value = t; u.uHead.value.copy(head); u.uFade.value = clamp01(since/3); }
+  if (starObj) updateStar(t);
+
+  stations.forEach((s, i) => {
+    const a = since - .5 - i*0.3;
+    const e2 = Math.max(0.001, easeOutBack(clamp01(a/0.8)));
+
+    // poster: leggero galleggiamento + alone quando lo guardi
+    s.poster.getWorldPosition(tmp).sub(head); const dist = tmp.length(); tmp.normalize();
+    const looking = tmp.dot(look) > cosGaze, target = looking ? 1 : 0;
+    s.dwell = Math.max(0, s.dwell + ((looking && dist < CFG.near && a > 1) ? dt : -dt*.5));   // lo stai leggendo?
+    if (s.dwell > 1.6 && !s.visited){ s.visited = true; onVisit(i); }
+    s.h += (target - s.h) * (1 - Math.exp(-dt*6));
+    s.poster.scale.setScalar(e2 * (1 + .03*s.h));
+    s.poster.position.y = CFG.posterY + Math.sin(t*.9 + i)*.015;
+    s.halo.material.opacity = .2 + .8*s.h;
+  });
+  updateGuide(dt, t, since);
+}
+
+function render(time){
+  const t = time/1000;
+  if (last === null) last = t;
+  const dt = Math.min(t - last, 0.05); last = t;
+  if (desktop && nat){
+    moveCamera(dt); camera.updateMatrixWorld(true); update(dt, t);
+    fpsT += dt; if (++fpsN === 60){                  // risoluzione adattiva sul computer: se va a scatti scende, se è fluida risale
+      const avg = fpsT/fpsN; fpsT = fpsN = 0;
+      if (avg > .026 && PR > .6){ PR = Math.max(.6, PR - .15); renderer.setPixelRatio(PR); }
+      else if (avg < .017 && PR < PR_MAX){ PR = Math.min(PR_MAX, PR + .1); renderer.setPixelRatio(PR); }
+    }
+  }
+  else if (renderer.xr.isPresenting && nat) update(dt, t);
+  renderer.render(scene, camera);
+}
+
+/* ---------- Avvio ---------- */
+function refreshButton(){
+  if (!modelOK || !xrChecked) return;
+  startBtn.disabled = false;
+  if (xrOK){                                    // sul visore: realtà mista, e in più l’anteprima da computer
+    startBtn.textContent = "Entra nella realtà mista"; pcBtn.classList.remove("hidden");
+    setStatus("Pronto. Guardati intorno: la Natività compare da sola.");
+  } else {                                      // sul computer: solo l’anteprima
+    startBtn.textContent = "Avvia l’anteprima";
+    setStatus("Pronto. La Natività compare da sola dopo un istante.");
+  }
+}
+async function checkXR(){
+  xrOK = !!navigator.xr && await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
+  xrChecked = true; refreshButton();
+}
+startBtn.addEventListener("click", () => xrOK ? startAR() : startDesktop());
+pcBtn.addEventListener("click", startDesktop);
+init();
+loadNativity().then(m => { nat.add(m); modelOK = true; refreshButton(); setupSong(); })   // la canzone si scarica dopo il modello, non insieme
+  .catch(e => { console.error(e); setStatus("Non riesco a caricare la natività: " + (e && e.message || e)); setupSong(); });
+checkXR();
+</script>
+</body>
+</html>
