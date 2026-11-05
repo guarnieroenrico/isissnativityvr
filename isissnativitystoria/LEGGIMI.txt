@@ -1,0 +1,21 @@
+NATIVITÀ ISISS - come pubblicarla e cosa c'è di nuovo
+
+PUBBLICARE SU GITHUB PAGES
+- Carica TUTTA la cartella (compresi vendor/, net.js, sw.js, models/, art/, audio/).
+- Dopo ogni aggiornamento cambia il numero in sw.js (const CACHE = "nativita-v3" -> "nativita-v4"),
+  altrimenti i visori che hanno già aperto il sito continuano a usare la copia vecchia.
+- Dopo la PRIMA visita online, il sito si apre anche senza internet (il multiplayer però ha bisogno della rete).
+
+COSE DA PERSONALIZZARE (in index.html, blocco CFG e STATIONS)
+- CFG.infoUrl: link (es. pagina dell'open day). Se lo scrivi, a fine visita compare un QR code nella schermata iniziale
+  e l'indirizzo sulla scheda finale. Se resta "" non compare niente.
+- Testi italiani e inglesi dei poster: STATIONS, campo "en".
+- Altri testi (guida, messaggi, scheda finale): blocco I18N.
+
+MULTIPLAYER
+- Stanza con codice: scrivete lo stesso nome nella pagina iniziale. Ognuno ha un cappello di colore diverso e due palline per le mani.
+- Grilletto: tocca mucca, stella o mangiatoia (l'amico sente e vede lo stesso); se non punti niente, manda un cuore.
+- Se due persone sono vicine alla mangiatoia per 2-3 secondi parte il momento speciale con gli angeli (anche da soli).
+
+PROVA SUL COMPUTER
+- Aggiungi ?debug all'indirizzo per avere strumenti di prova nella console del browser (window.__nat).
