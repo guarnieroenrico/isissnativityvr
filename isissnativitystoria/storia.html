@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><title>La storia · Scena 1 · I Re Magi</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>
+html,body{margin:0;height:100%;background:#050a18;overflow:hidden;font-family:Georgia,"Times New Roman",serif;color:#f6ecd6;overscroll-behavior:none}
+canvas{position:fixed;inset:0;display:block;touch-action:none;cursor:grab}
+#fade{position:fixed;inset:0;background:#030612;pointer-events:none;transition:opacity 3.2s ease .2s}body.ready #fade{opacity:0}
+#status{position:fixed;left:0;right:0;top:46%;text-align:center;letter-spacing:.08em;font-size:15px;opacity:.85}
+.cap{position:fixed;left:max(22px,env(safe-area-inset-left));bottom:max(24px,env(safe-area-inset-bottom));max-width:min(560px,calc(100% - 44px));text-shadow:0 2px 14px #000;opacity:0;transition:opacity 2.5s ease 2.4s;pointer-events:none}
+body.ready .cap{opacity:1}.cap small{display:block;letter-spacing:.22em;text-transform:uppercase;font-size:11px;color:#f2c14e;margin-bottom:6px}
+.cap h1{font-size:clamp(22px,4.4vw,38px);margin:0 0 8px;font-weight:600}.cap p{margin:0;font-size:clamp(14px,2.2vw,17px);line-height:1.5;font-style:italic;opacity:.92}
+.nav{position:fixed;right:max(18px,env(safe-area-inset-right));bottom:max(24px,env(safe-area-inset-bottom));display:flex;gap:10px;opacity:0;transition:opacity 2.5s ease 3s}body.ready .nav{opacity:1}
+.nav a,.nav button{font:inherit;font-size:14px;color:#f6ecd6;background:rgba(10,20,45,.55);border:1px solid rgba(242,193,78,.5);border-radius:999px;padding:10px 18px;text-decoration:none;backdrop-filter:blur(6px);cursor:pointer}.nav button.on{background:rgba(242,193,78,.9);color:#241a05;border-color:#f2c14e}
+#tap{position:fixed;left:50%;top:max(54px,calc(env(safe-area-inset-top) + 38px));transform:translateX(-50%);font-size:12px;letter-spacing:.12em;color:#241a05;background:rgba(242,193,78,.92);border-radius:999px;padding:8px 16px;opacity:0;pointer-events:none;transition:opacity .6s ease;white-space:nowrap}#tap.on{opacity:1}
+.hint{position:fixed;top:max(16px,env(safe-area-inset-top));left:0;right:0;text-align:center;font-size:12px;letter-spacing:.12em;opacity:0;text-shadow:0 1px 8px #000;transition:opacity 2s ease 4s;pointer-events:none}body.ready .hint{opacity:.7}
+@media(max-width:560px){#tap{top:32%}.nav{left:22px;right:22px;bottom:auto;top:max(40px,env(safe-area-inset-top))}.nav a,.nav button{flex:1;font-size:13px;padding:9px 10px}.hint{top:auto;bottom:max(150px,calc(env(safe-area-inset-bottom) + 130px))}}
+</style></head><body>
+<div id="fade"></div><div id="status">Carico i Re Magi…</div>
+<div id="tap">TOCCA PER ATTIVARE IL RACCONTO AUDIO</div>
+<div class="hint">TRASCINA PER GUARDARTI INTORNO</div>
+<div class="cap"><small>Scena 1 · Nel deserto</small><h1>La stella nel cielo</h1><p>«Abbiamo visto spuntare la sua stella e siamo venuti ad adorarlo.» — Matteo 2,2</p></div>
+<div class="nav"><a href="index.html">← Presepe</a><button data-scene="1">Scena 1 · Deserto</button><button data-scene="2">Scena 2 · Betlemme</button><button id="snd" title="Audio acceso/spento">🔊 Audio</button></div>
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.js","three/addons/":"./vendor/three/addons/"}}</script>
+<script type="module">
+import * as THREE from "three"; import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js"; import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
+window.THREEX = Object.assign({}, THREE, { GLTFLoader, MeshoptDecoder });
+const s = document.createElement("script"); s.src = "storia.js"; document.body.append(s);
+</script>
+</body></html>
